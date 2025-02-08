@@ -294,7 +294,8 @@ impl<Uart, ConfigPin> Write for HC12<Uart, ConfigPin> {
     }
 
     fn flush(&mut self) -> Result<(), Self::Error> {
-        todo!();
+        // We don't actually do anything here, as this is actually non-blocking
+        Ok(())
     }
 }
 
@@ -380,8 +381,9 @@ where
     }
 
     // Creates and initializes a new HC12 driver object.
-    pub fn new(uart: Uart, config_pin: ConfigPin) -> Result<Self, HC12Error> {
-        // Attempt to set the HC12 module to normal mode (config pin = LOW)
+    pub fn new(uart: Uart, mut config_pin: ConfigPin) -> Result<Self, HC12Error> {
+        // Attempt to set the HC12 module to normal mode (config pin = HIGH)
+        config_pin.set_high().ok(); // Infallible
 
         let mut hc12 = HC12 {
             uart: Some(uart),
