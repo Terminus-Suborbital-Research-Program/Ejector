@@ -31,16 +31,20 @@ mod app {
         actuators::servo::{EjectionServoMosfet, EjectorServo, Servo},
         communications::{
             hc12::{UART1Bus, GPIO10},
-            link_layer::Device,
+            link_layer::{Device, LinkPacket},
         },
         phases::EjectorStateMachine,
     };
 
     use super::*;
 
-    use bin_packets::phases::EjectorPhase;
+    use bin_packets::{packets::ApplicationPacket, phases::EjectorPhase};
 
-    use communications::{link_layer::LinkLayerDevice, serial_handler::HeaplessString, *};
+    use communications::{
+        link_layer::{LinkLayerDevice, LinkLayerPayload},
+        serial_handler::HeaplessString,
+        *,
+    };
 
     use canonical_toolchain::{print, println};
     use embedded_hal::digital::{OutputPin, StatefulOutputPin};
@@ -90,6 +94,7 @@ mod app {
         serial_console_writer: serial_handler::SerialWriter,
         clock_freq_hz: u32,
         state_machine: EjectorStateMachine,
+        blink_status_delay_millis: u64,
     }
 
     #[local]
@@ -187,19 +192,6 @@ mod app {
         ejector_servo.enable();
         ejector_servo.hold();
 
-        // Locking servo (currently not planned)
-        // let mut locking_pwm = pwm_slices.pwm1;
-        // locking_pwm.enable();
-        // locking_pwm.set_div_int(48);
-        // let mut locking_mosfet_pin: LockingServoMosfet = bank0_pins.gpio3.into_push_pull_output();
-        // locking_mosfet_pin.set_low().unwrap();
-        // let mut locking_channel_a = locking_pwm.channel_a;
-        // let locking_channel_pin = locking_channel_a.output_to(bank0_pins.gpio2);
-        // locking_channel_a.set_enabled(true);
-        // let mut locking_servo =
-        //     Servo::new(locking_channel_a, locking_channel_pin, locking_mosfet_pin);
-        // locking_servo.set_angle(LOCKING_SERVO_LOCKED);
-
         // Set up USB Device allocator
         let usb_bus = UsbBusAllocator::new(hal::usb::UsbBus::new(
             ctx.device.USB,
@@ -246,31 +238,30 @@ mod app {
                 serial_console_writer,
                 clock_freq_hz: clock_freq.to_Hz(),
                 state_machine: EjectorStateMachine::new(),
+                blink_status_delay_millis: 1000,
             },
             Local { led: led_pin },
         )
     }
 
     // Heartbeats the main led
-    #[task(local = [led], priority = 2)]
-    async fn heartbeat(ctx: heartbeat::Context) {
+    #[task(local = [led], shared = [blink_status_delay_millis], priority = 2)]
+    async fn heartbeat(mut ctx: heartbeat::Context) {
         loop {
             _ = ctx.local.led.toggle();
 
-            // Send a status packet
-            // ctx.shared.radio_link.lock(|radio| {
-            //     let packet = radio
-            //         .construct_packet(ApplicationPacket::EjectorStatus(status), Device::Icarus);
-            //     radio.write_link_packet(packet).ok();
-            // });
-            // status.packet_number += 1;
-
-            Mono::delay(1000_u64.millis()).await;
+            Mono::delay(
+                ctx.shared
+                    .blink_status_delay_millis
+                    .lock(|delay| *delay)
+                    .millis(),
+            )
+            .await;
         }
     }
 
     // State machine update
-    #[task(shared = [state_machine, serial_console_writer, ejector_servo], priority = 1)]
+    #[task(shared = [state_machine, serial_console_writer, ejector_servo, blink_status_delay_millis], priority = 1)]
     async fn state_machine_update(mut ctx: state_machine_update::Context) {
         loop {
             let wait_time = ctx.shared.state_machine.lock(|state_machine| {
@@ -288,6 +279,11 @@ mod app {
                     ctx.shared.ejector_servo.lock(|servo| {
                         servo.hold();
                     });
+
+                    // 1000ms delay
+                    ctx.shared
+                        .blink_status_delay_millis
+                        .lock(|delay| *delay = 1000);
                 }
 
                 EjectorPhase::Ejection => {
@@ -295,6 +291,10 @@ mod app {
                     ctx.shared.ejector_servo.lock(|servo| {
                         servo.eject();
                     });
+                    // 200ms delay
+                    ctx.shared
+                        .blink_status_delay_millis
+                        .lock(|delay| *delay = 200);
                 }
 
                 EjectorPhase::Hold => {
@@ -302,6 +302,10 @@ mod app {
                     ctx.shared.ejector_servo.lock(|servo| {
                         servo.hold();
                     });
+                    // 5000ms delay
+                    ctx.shared
+                        .blink_status_delay_millis
+                        .lock(|delay| *delay = 5000);
                 }
             }
 
@@ -311,9 +315,52 @@ mod app {
     }
 
     // Takes care of receiving incoming packets
-    #[task(shared = [radio_link, serial_console_writer], priority = 0)]
-    async fn incoming_packet_handler(_ctx: incoming_packet_handler::Context) {
-        loop {}
+    #[task(shared = [radio_link, state_machine], priority = 2)]
+    async fn incoming_packet_handler(mut ctx: incoming_packet_handler::Context) {
+        loop {
+            while let Some(packet) = ctx.shared.radio_link.lock(|radio| radio.read_link_packet()) {
+                // Only act on packets with valid checksums
+                if !packet.verify_checksum() {
+                    continue;
+                }
+
+                match packet.payload {
+                    LinkLayerPayload::Payload(app_packet) => {
+                        // Ejector only handles commands right now
+                        match app_packet {
+                            ApplicationPacket::Command(command) => {
+                                // Enter phase, based on the command
+                                match command {
+                                    bin_packets::packets::CommandPacket::EjectorPhaseSet(phase) => {
+                                        ctx.shared.state_machine.lock(|state_machine| {
+                                            state_machine.set_phase(phase);
+                                        });
+
+                                        // Send a response, with no data (for my testing)
+                                        ctx.shared.radio_link.lock(|radio| {
+                                            let packet = LinkPacket::default();
+                                            radio.write_link_packet(packet).ok();
+                                        });
+                                    }
+
+                                    _ => {
+                                        // Unhandled command on the Ejector
+                                    }
+                                }
+                            }
+
+                            _ => {}
+                        }
+                    }
+
+                    _ => {
+                        // Link not implimented
+                    }
+                }
+            }
+
+            Mono::delay(10_u64.millis()).await;
+        }
     }
 
     // Updates the radio module on the serial interrupt
@@ -487,17 +534,39 @@ mod app {
                     println!(ctx, "Current Phase: {:?}", phase);
                 }
 
-                "eject" => {
-                    // Eject the deployable
-                    ctx.shared.state_machine.lock(|state_machine| {
-                        state_machine.set_phase(EjectorPhase::Ejection);
+                "command-eject" => {
+                    // Send an ejection command to the ejector
+                    let packet = ApplicationPacket::Command(
+                        bin_packets::packets::CommandPacket::EjectorPhaseSet(
+                            bin_packets::phases::EjectorPhase::Ejection,
+                        ),
+                    );
+
+                    let link_packet = ctx
+                        .shared
+                        .radio_link
+                        .lock(|radio| radio.construct_packet(packet, Device::Ejector));
+
+                    ctx.shared.radio_link.lock(|radio| {
+                        radio.write_link_packet(link_packet).ok();
                     });
                 }
 
-                "standby" => {
-                    // Standby the deployable
-                    ctx.shared.state_machine.lock(|state_machine| {
-                        state_machine.set_phase(EjectorPhase::Standby);
+                "command-standby" => {
+                    // Send a standby command to the ejector
+                    let packet = ApplicationPacket::Command(
+                        bin_packets::packets::CommandPacket::EjectorPhaseSet(
+                            bin_packets::phases::EjectorPhase::Standby,
+                        ),
+                    );
+
+                    let link_packet = ctx
+                        .shared
+                        .radio_link
+                        .lock(|radio| radio.construct_packet(packet, Device::Ejector));
+
+                    ctx.shared.radio_link.lock(|radio| {
+                        radio.write_link_packet(link_packet).ok();
                     });
                 }
 
