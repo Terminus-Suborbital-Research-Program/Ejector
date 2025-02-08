@@ -6,25 +6,20 @@
 pub mod actuators;
 pub mod communications;
 pub mod phases;
-pub mod sensors;
 pub mod utilities;
 
 use panic_halt as _;
 
 // HAL Access
-#[cfg(feature = "rp2350")]
 use rp235x_hal as hal;
 
 // Monotonics
-#[cfg(feature = "rp2350")]
 use rtic_monotonics::rp235x::prelude::*;
-#[cfg(feature = "rp2350")]
 rp235x_timer_monotonic!(Mono);
 
 /// Tell the Boot ROM about our application
 #[link_section = ".start_block"]
 #[used]
-#[cfg(feature = "rp2350")]
 pub static IMAGE_DEF: rp235x_hal::block::ImageDef = rp235x_hal::block::ImageDef::secure_exe();
 
 #[rtic::app(
@@ -43,7 +38,7 @@ mod app {
 
     use super::*;
 
-    use bin_packets::{data::EjectorStatus, phases::EjectorPhase};
+    use bin_packets::phases::EjectorPhase;
 
     use communications::{link_layer::LinkLayerDevice, serial_handler::HeaplessString, *};
 
@@ -84,7 +79,7 @@ mod app {
 
     static mut USB_BUS: Option<UsbBusAllocator<hal::usb::UsbBus>> = None;
 
-    use core::cmp::{max, min};
+    use core::cmp::max;
 
     #[shared]
     struct Shared {
@@ -234,6 +229,7 @@ mod app {
 
         usb_serial_console_printer::spawn(usb_console_line_receiver).ok();
         usb_console_reader::spawn(usb_console_command_sender).ok();
+        #[cfg(debug_assertions)]
         command_handler::spawn(usb_console_command_receiver).ok();
         radio_flush::spawn().ok();
         incoming_packet_handler::spawn().ok();
@@ -256,15 +252,8 @@ mod app {
     }
 
     // Heartbeats the main led
-    #[task(local = [led], shared = [radio_link], priority = 2)]
+    #[task(local = [led], priority = 2)]
     async fn heartbeat(ctx: heartbeat::Context) {
-        let status = EjectorStatus {
-            phase: EjectorPhase::Standby,
-            time_in_phase: 0,
-            timestamp: 0,
-            packet_number: 0,
-        };
-
         loop {
             _ = ctx.local.led.toggle();
 
@@ -323,55 +312,8 @@ mod app {
 
     // Takes care of receiving incoming packets
     #[task(shared = [radio_link, serial_console_writer], priority = 0)]
-    async fn incoming_packet_handler(ctx: incoming_packet_handler::Context) {
-        loop {
-            //println!(ctx, "Checking for incoming packets");
-            // let buffer = ctx
-            //     .shared
-            //     .radio_link
-            //     .lock(|radio| radio.device.clone_buffer());
-
-            // Try to read
-            // let decode: Result<(LinkPacket, usize), bincode::error::DecodeError> =
-            //     bincode::decode_from_slice(&buffer, standard());
-
-            // match decode {
-            //     Ok(info) => {
-            //         let packet = info.0;
-            //         let read = info.1;
-            //         // Drop the number bytes read from the buffer
-            //         ctx.shared.radio_link.lock(|radio| {
-            //             radio.device.drop_bytes(read);
-            //         });
-
-            //         // Print the packet
-            //         let payload = packet.payload;
-            //         println!(ctx, "Payload: {:?}", payload);
-            //     }
-
-            //     Err(error) => {
-            //         // If we have an unexpected end, then we just need to wait for more data
-            //         // Otherwise we shoudl pop off the front of the buffer to try and get
-            //         // past the garbled packet
-            //         match error {
-            //             DecodeError::UnexpectedEnd { .. } => {
-            //                 // Wait for more data
-            //             }
-
-            //             _ => {
-            //                 // Print the error
-            //                 println!(ctx, "Error: {:?}", error);
-
-            //                 // Clear the buffer
-            //                 ctx.shared.radio_link.lock(|radio| {
-            //                     radio.device.clear();
-            //                 });
-            //             }
-            //         }
-            //     }
-            // }
-            //Mono::delay(1000_u64.millis()).await;
-        }
+    async fn incoming_packet_handler(_ctx: incoming_packet_handler::Context) {
+        loop {}
     }
 
     // Updates the radio module on the serial interrupt
@@ -504,7 +446,6 @@ mod app {
 
     // Command Handler
     #[task(shared=[serial_console_writer, radio_link, clock_freq_hz, ejector_servo, state_machine], priority = 2)]
-    #[cfg(debug_assertions)]
     async fn command_handler(
         mut ctx: command_handler::Context,
         mut reciever: Receiver<
