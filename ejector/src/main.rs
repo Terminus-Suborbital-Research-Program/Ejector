@@ -33,34 +33,22 @@ pub static IMAGE_DEF: rp235x_hal::block::ImageDef = rp235x_hal::block::ImageDef:
 )]
 mod app {
     use crate::{
-        actuators::servo::{EjectionServo, EjectionServoMosfet, EjectorServo, Servo},
+        actuators::servo::{EjectionServoMosfet, EjectorServo, Servo},
         communications::{
             hc12::{UART1Bus, GPIO10},
-            link_layer::{Device, LinkPacket},
+            link_layer::Device,
         },
         phases::EjectorStateMachine,
     };
 
     use super::*;
 
-    use bin_packets::{
-        data::EjectorStatus,
-        packets::{ApplicationPacket, CommandPacket, ConnectionTest},
-        phases::EjectorPhase,
-    };
-    use bincode::{
-        config::standard,
-        error::DecodeError::{self, UnexpectedVariant},
-    };
-    use communications::{
-        link_layer::{LinkLayerDevice, LinkLayerPayload},
-        serial_handler::HeaplessString,
-        *,
-    };
+    use bin_packets::{data::EjectorStatus, phases::EjectorPhase};
+
+    use communications::{link_layer::LinkLayerDevice, serial_handler::HeaplessString, *};
 
     use canonical_toolchain::{print, println};
     use embedded_hal::digital::{OutputPin, StatefulOutputPin};
-    use embedded_io::Read;
     use fugit::RateExtU32;
     use hal::{
         gpio::{self, FunctionSio, PullNone, SioOutput},
@@ -96,7 +84,7 @@ mod app {
 
     static mut USB_BUS: Option<UsbBusAllocator<hal::usb::UsbBus>> = None;
 
-    use core::cmp::min;
+    use core::cmp::{max, min};
 
     #[shared]
     struct Shared {
@@ -249,6 +237,7 @@ mod app {
         command_handler::spawn(usb_console_command_receiver).ok();
         radio_flush::spawn().ok();
         incoming_packet_handler::spawn().ok();
+        state_machine_update::spawn().ok();
 
         (
             Shared {
@@ -268,8 +257,8 @@ mod app {
 
     // Heartbeats the main led
     #[task(local = [led], shared = [radio_link], priority = 2)]
-    async fn heartbeat(mut ctx: heartbeat::Context) {
-        let mut status = EjectorStatus {
+    async fn heartbeat(ctx: heartbeat::Context) {
+        let status = EjectorStatus {
             phase: EjectorPhase::Standby,
             time_in_phase: 0,
             timestamp: 0,
@@ -292,7 +281,7 @@ mod app {
     }
 
     // State machine update
-    #[task(shared = [state_machine, serial_console_writer], priority = 1)]
+    #[task(shared = [state_machine, serial_console_writer, ejector_servo], priority = 1)]
     async fn state_machine_update(mut ctx: state_machine_update::Context) {
         loop {
             let wait_time = ctx.shared.state_machine.lock(|state_machine| {
@@ -300,14 +289,41 @@ mod app {
                 wait_time
             });
 
+            match ctx
+                .shared
+                .state_machine
+                .lock(|state_machine| state_machine.phase())
+            {
+                EjectorPhase::Standby => {
+                    // Hold the deployable
+                    ctx.shared.ejector_servo.lock(|servo| {
+                        servo.hold();
+                    });
+                }
+
+                EjectorPhase::Ejection => {
+                    // Eject the deployable
+                    ctx.shared.ejector_servo.lock(|servo| {
+                        servo.eject();
+                    });
+                }
+
+                EjectorPhase::Hold => {
+                    // Hold the deployable
+                    ctx.shared.ejector_servo.lock(|servo| {
+                        servo.hold();
+                    });
+                }
+            }
+
             // We should never wait less than 1ms, tbh
-            Mono::delay(min(wait_time, 1).millis()).await;
+            Mono::delay(max(wait_time, 1).millis()).await;
         }
     }
 
     // Takes care of receiving incoming packets
     #[task(shared = [radio_link, serial_console_writer], priority = 0)]
-    async fn incoming_packet_handler(mut ctx: incoming_packet_handler::Context) {
+    async fn incoming_packet_handler(ctx: incoming_packet_handler::Context) {
         loop {
             //println!(ctx, "Checking for incoming packets");
             // let buffer = ctx
@@ -487,7 +503,7 @@ mod app {
     }
 
     // Command Handler
-    #[task(shared=[serial_console_writer, radio_link, clock_freq_hz, ejector_servo], priority = 2)]
+    #[task(shared=[serial_console_writer, radio_link, clock_freq_hz, ejector_servo, state_machine], priority = 2)]
     #[cfg(debug_assertions)]
     async fn command_handler(
         mut ctx: command_handler::Context,
@@ -520,19 +536,27 @@ mod app {
                     );
                 }
 
+                "phase" => {
+                    // Print the current phase
+                    let phase = ctx
+                        .shared
+                        .state_machine
+                        .lock(|state_machine| state_machine.phase());
+
+                    println!(ctx, "Current Phase: {:?}", phase);
+                }
+
                 "eject" => {
                     // Eject the deployable
-                    ctx.shared.ejector_servo.lock(|servo| {
-                        servo.enable();
-                        servo.eject();
+                    ctx.shared.state_machine.lock(|state_machine| {
+                        state_machine.set_phase(EjectorPhase::Ejection);
                     });
                 }
 
-                "hold" => {
-                    // Hold the deployable
-                    ctx.shared.ejector_servo.lock(|servo| {
-                        servo.enable();
-                        servo.hold();
+                "standby" => {
+                    // Standby the deployable
+                    ctx.shared.state_machine.lock(|state_machine| {
+                        state_machine.set_phase(EjectorPhase::Standby);
                     });
                 }
 

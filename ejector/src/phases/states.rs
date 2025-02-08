@@ -1,8 +1,9 @@
-use bin_packets::{phases::EjectorPhase, types::UnixTimestampMillis};
+use bin_packets::phases::EjectorPhase;
 
 /// State machine for the Ejector, holds the current phase
 pub struct EjectorStateMachine {
     phase: EjectorPhase,
+    next_phase: Option<EjectorPhase>,
 }
 
 impl EjectorStateMachine {
@@ -10,22 +11,38 @@ impl EjectorStateMachine {
     pub fn new() -> Self {
         Self {
             phase: EjectorPhase::Standby,
+            next_phase: None,
         }
     }
 
     /// Mabye transition to the next phase, depending on conditions
     /// returns the number of ms we should wait before trying to transition again
     pub fn transition(&mut self) -> u64 {
+        if let Some(next_phase) = self.next_phase {
+            self.phase = next_phase;
+            self.next_phase = None;
+        }
+
         let (phase, time) = match self.phase {
             // Standby only moves into ejection if explicitly commanded, so
             // we don't model that here
-            EjectorPhase::Standby => (EjectorPhase::Standby, 0),
+            EjectorPhase::Standby => (None, 0),
 
-            EjectorPhase::Ejection => (EjectorPhase::Hold, 5000),
+            EjectorPhase::Ejection => (Some(EjectorPhase::Hold), 5000),
 
-            EjectorPhase::Hold => (EjectorPhase::Hold, 10000),
+            EjectorPhase::Hold => (None, 10000),
         };
-        self.phase = phase;
+        self.next_phase = phase;
         time
+    }
+
+    /// Copies the current phase
+    pub fn phase(&self) -> EjectorPhase {
+        self.phase.clone()
+    }
+
+    /// Sets the phase to a specific value
+    pub fn set_phase(&mut self, phase: EjectorPhase) {
+        self.phase = phase;
     }
 }
