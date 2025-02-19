@@ -132,6 +132,7 @@ where
         let mut slice = [0u8; 128];
         let written = encode_into_slice(packet, &mut slice, standard())?;
         self.device.write(&slice[..written]).ok();
+        self.device.flush().ok();
         Ok(())
     }
 }

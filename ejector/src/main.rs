@@ -1,4 +1,3 @@
-// Specifies that the standard library is not used
 #![no_std]
 #![no_main]
 
@@ -48,7 +47,7 @@ mod app {
 
     use canonical_toolchain::{print, println};
     use embedded_hal::digital::{OutputPin, StatefulOutputPin};
-    use fugit::RateExtU32;
+    use fugit::{Duration, RateExtU32};
     use hal::{
         gpio::{self, FunctionSio, PullNone, SioOutput},
         sio::Sio,
@@ -224,7 +223,7 @@ mod app {
         #[cfg(debug_assertions)]
         command_handler::spawn(usb_console_command_receiver).ok();
         radio_flush::spawn().ok();
-        incoming_packet_handler::spawn().ok();
+        //incoming_packet_handler::spawn().ok();
         state_machine_update::spawn().ok();
 
         (
@@ -315,7 +314,7 @@ mod app {
     }
 
     // Takes care of receiving incoming packets
-    #[task(shared = [radio_link, state_machine], priority = 2)]
+    #[task(shared = [radio_link, state_machine], priority = 3)]
     async fn incoming_packet_handler(mut ctx: incoming_packet_handler::Context) {
         loop {
             while let Some(packet) = ctx.shared.radio_link.lock(|radio| radio.read_link_packet()) {
@@ -337,6 +336,14 @@ mod app {
                                         });
 
                                         // Send a response, with no data (for my testing)
+                                        ctx.shared.radio_link.lock(|radio| {
+                                            let packet = LinkPacket::default();
+                                            radio.write_link_packet(packet).ok();
+                                        });
+                                    }
+
+                                    // Ping commands return an empty packet
+                                    bin_packets::packets::CommandPacket::Ping => {
                                         ctx.shared.radio_link.lock(|radio| {
                                             let packet = LinkPacket::default();
                                             radio.write_link_packet(packet).ok();
@@ -492,7 +499,7 @@ mod app {
     }
 
     // Command Handler
-    #[task(shared=[serial_console_writer, radio_link, clock_freq_hz, ejector_servo, state_machine], priority = 2)]
+    #[task(shared=[serial_console_writer, radio_link, clock_freq_hz, ejector_servo, state_machine], priority = 3)]
     async fn command_handler(
         mut ctx: command_handler::Context,
         mut reciever: Receiver<
@@ -568,6 +575,54 @@ mod app {
                     ctx.shared.radio_link.lock(|radio| {
                         radio.write_link_packet(link_packet).ok();
                     });
+                }
+
+                // Runs a ping test, pinging Ejector 'n' times
+                "ping" => {
+                    let n = parts.next().unwrap_or("1").parse::<u32>().unwrap_or(1);
+                    let mut recieved = 0;
+                    let mut sent = 0;
+
+                    while recieved < n {
+                        // Send a ping command
+                        let packet =
+                            ApplicationPacket::Command(bin_packets::packets::CommandPacket::Ping);
+                        let link_packet = ctx
+                            .shared
+                            .radio_link
+                            .lock(|radio| radio.construct_packet(packet, Device::Ejector));
+
+                        println!(ctx, "Sending Ping: {}", sent);
+                        ctx.shared.radio_link.lock(|radio| {
+                            radio.write_link_packet(link_packet).ok();
+                        });
+                        sent += 1;
+                        println!(ctx, "Sent: {}", sent);
+
+                        // Note the current time
+                        let start_time = Mono::now();
+
+                        // Wait for a reply, if we don't get one in 1s, we'll just send another
+                        let del: Duration<u64, 1, 1000000> = 1u64.secs();
+                        while Mono::now() - start_time < del {
+                            // Check for a reply
+                            if let Some(_packet) =
+                                ctx.shared.radio_link.lock(|radio| radio.read_link_packet())
+                            {
+                                recieved += 1;
+                                println!(ctx, "Recieved: {}", recieved);
+                                break;
+                            }
+
+                            Mono::delay(10_u64.millis()).await;
+                        }
+                        Mono::delay(30_u64.millis()).await;
+                    }
+
+                    println!(ctx, "Sent: {}, Recieved: {}", sent, recieved);
+                    // Percentage of packets recieved
+                    Mono::delay(300_u64.millis()).await;
+                    println!(ctx, "{}%", (recieved as f32 / sent as f32) * 100.0);
                 }
 
                 // Peeks at the buffer, printing it to the console
