@@ -56,7 +56,7 @@ mod app {
 
     use super::*;
 
-    use bin_packets::{CommandPacket, ConnectionTest};
+    use bin_packets::packets::{CommandPacket, ConnectionTest};
     use bincode::{
         config::standard,
         error::DecodeError::{self, UnexpectedVariant},
@@ -373,36 +373,45 @@ mod app {
 
                     match packet.payload {
                         LinkLayerPayload::Payload(app_packet) => match app_packet {
-                            bin_packets::ApplicationPacket::Command(command) => match command {
-                                // Connection test sequence
-                                CommandPacket::ConnectionTest(connection) => match connection {
-                                    ConnectionTest::Start => {
-                                        connection_test_sequence = 0;
-                                        connection_test_start = Mono::now();
-                                    }
+                            bin_packets::packets::ApplicationPacket::Command(command) => {
+                                match command {
+                                    // Connection test sequence
+                                    CommandPacket::ConnectionTest(connection) => match connection {
+                                        ConnectionTest::Start => {
+                                            connection_test_sequence = 0;
+                                            connection_test_start = Mono::now();
+                                        }
 
-                                    ConnectionTest::Sequence(seq) => {
-                                        connection_test_sequence += 1;
-                                        println!(ctx, "Received Connection Test Sequence: {}", seq);
-                                    }
+                                        ConnectionTest::Sequence(seq) => {
+                                            connection_test_sequence += 1;
+                                            println!(
+                                                ctx,
+                                                "Received Connection Test Sequence: {}", seq
+                                            );
+                                        }
 
-                                    ConnectionTest::End => {
-                                        println!(ctx, "Received Connection Test End");
+                                        ConnectionTest::End => {
+                                            println!(ctx, "Received Connection Test End");
 
-                                        let percentage_recieved =
-                                            (connection_test_sequence as f32 / 256.0) * 100.0;
-                                        println!(
-                                            ctx,
-                                            "Received {}% of the connection test sequence",
-                                            percentage_recieved
-                                        );
+                                            let percentage_recieved =
+                                                (connection_test_sequence as f32 / 256.0) * 100.0;
+                                            println!(
+                                                ctx,
+                                                "Received {}% of the connection test sequence",
+                                                percentage_recieved
+                                            );
 
-                                        let elapsed = Mono::now() - connection_test_start;
-                                        println!(ctx, "Elapsed Time: {}ms", elapsed.to_millis());
-                                    }
-                                },
-                                _ => {}
-                            },
+                                            let elapsed = Mono::now() - connection_test_start;
+                                            println!(
+                                                ctx,
+                                                "Elapsed Time: {}ms",
+                                                elapsed.to_millis()
+                                            );
+                                        }
+                                    },
+                                    _ => {}
+                                }
+                            }
 
                             _ => {
                                 let mut buffer_heapless_stirng: alloc::string::String =
@@ -566,7 +575,7 @@ mod app {
             MAX_USB_LINES,
         >,
     ) {
-        use bin_packets::ApplicationPacket;
+        use bin_packets::packets::ApplicationPacket;
         use embedded_io::{Read as _, ReadReady as _};
         use heapless::String;
 
