@@ -12,7 +12,6 @@ pub mod startup;
 pub mod tasks;
 pub mod usb_tasks;
 
-use startup::*;
 use tasks::*;
 use usb_tasks::*;
 
@@ -39,24 +38,24 @@ mod app {
         actuators::servo::{EjectionServoMosfet, EjectorServo, Servo},
         communications::{
             hc12::{UART1Bus, GPIO10},
-            link_layer::{Device, LinkPacket},
+            link_layer::Device,
         },
         phases::EjectorStateMachine,
     };
 
     use super::*;
 
-    use bin_packets::{packets::ApplicationPacket, phases::EjectorPhase};
+    
 
     use communications::{
-        link_layer::{LinkLayerDevice, LinkLayerPayload},
+        link_layer::LinkLayerDevice,
         serial_handler::HeaplessString,
         *,
     };
 
-    use canonical_toolchain::{print, println};
-    use embedded_hal::digital::{OutputPin, StatefulOutputPin};
-    use fugit::{Duration, RateExtU32};
+    
+    use embedded_hal::digital::OutputPin;
+    use fugit::RateExtU32;
     use hal::{
         gpio::{self, FunctionSio, PullNone, SioOutput},
         sio::Sio,
@@ -72,7 +71,7 @@ mod app {
     use usb_device::{class_prelude::*, prelude::*};
     use usbd_serial::{embedded_io::Write, SerialPort};
 
-    use hc12::{BaudRate, HC12};
+    use hc12::HC12;
 
     use rtic_sync::{
         channel::{Receiver, Sender},
@@ -91,7 +90,7 @@ mod app {
 
     static mut USB_BUS: Option<UsbBusAllocator<hal::usb::UsbBus>> = None;
 
-    use core::cmp::max;
+    
 
     #[shared]
     struct Shared {
