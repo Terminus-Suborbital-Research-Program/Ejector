@@ -1,5 +1,5 @@
 use crate::{
-    communications::{hc12, link_layer::Device},
+    communications::link_layer::Device,
     hal, utilities,
 };
 use bin_packets::packets::ApplicationPacket;
@@ -20,7 +20,7 @@ pub async fn command_handler(
     mut ctx: command_handler::Context<'_>,
     mut reciever: Receiver<'static, heapless::String<HEAPLESS_STRING_ALLOC_LENGTH>, MAX_USB_LINES>,
 ) {
-    use embedded_io::{Read as _, ReadReady as _};
+    
 
     while let Ok(line) = reciever.recv().await {
         // Split into commands and arguments, on whitespace
@@ -153,78 +153,7 @@ pub async fn command_handler(
 
             // HC12 Configuration Utility
             "hc-configure" => {
-                // Clear out the buffer, the HC12 often sends a bit of junk when
-                // it goes into config mode
-                ctx.shared.radio_link.lock(|link| {
-                    link.device.set_mode(hc12::HC12Mode::Configuration).ok();
-                });
-
-                Mono::delay(500_u64.millis()).await;
-
-                println!(ctx, "Clearing Buffer");
-                ctx.shared.radio_link.lock(|link| {
-                    link.device.clear();
-                    link.device.write("AT\n".as_bytes()).ok();
-                });
-
-                Mono::delay(500_u64.millis()).await;
-
-                println!(ctx, "AT Command Sent");
-                ctx.shared.radio_link.lock(|link| {
-                    link.device.update().ok();
-                    while link.device.read_ready().unwrap_or(false) {
-                        let mut buffer = [0u8; 1];
-                        link.device.read(&mut buffer).ok();
-                        print!(ctx, "{}", buffer[0] as char);
-                    }
-                });
-
-                // Set baudrate
-                ctx.shared.radio_link.lock(|link| {
-                    link.device.write("AT+B9600\n".as_bytes()).ok();
-                });
-                Mono::delay(500_u64.millis()).await;
-                ctx.shared.radio_link.lock(|link| {
-                    link.device.update().ok();
-                    while link.device.read_ready().unwrap_or(false) {
-                        let mut buffer = [0u8; 1];
-                        link.device.read(&mut buffer).ok();
-                        print!(ctx, "{}", buffer[0] as char);
-                    }
-                });
-
-                // Set channel (100)
-                ctx.shared.radio_link.lock(|link| {
-                    link.device.write("AT+C100\n".as_bytes()).ok();
-                });
-                Mono::delay(500_u64.millis()).await;
-                ctx.shared.radio_link.lock(|link| {
-                    link.device.update().ok();
-                    while link.device.read_ready().unwrap_or(false) {
-                        let mut buffer = [0u8; 1];
-                        link.device.read(&mut buffer).ok();
-                        print!(ctx, "{}", buffer[0] as char);
-                    }
-                });
-
-                // Set power to max (8)
-                ctx.shared.radio_link.lock(|link| {
-                    link.device.write("AT+P8\n".as_bytes()).ok();
-                });
-                Mono::delay(500_u64.millis()).await;
-                ctx.shared.radio_link.lock(|link| {
-                    link.device.update().ok();
-                    while link.device.read_ready().unwrap_or(false) {
-                        let mut buffer = [0u8; 1];
-                        link.device.read(&mut buffer).ok();
-                        print!(ctx, "{}", buffer[0] as char);
-                    }
-                });
-
-                // Set mode back to normal
-                ctx.shared.radio_link.lock(|link| {
-                    link.device.set_mode(hc12::HC12Mode::Normal).ok();
-                });
+                hc12_programmer::spawn().ok();
             }
 
             "clock-freq" => {
