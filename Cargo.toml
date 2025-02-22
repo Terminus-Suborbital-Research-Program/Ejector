@@ -30,17 +30,16 @@ usbd-serial = "0.2.2"
 # Time
 embedded-time = "0.12.1"
 fugit = "0.3.7"
-# Allocator - requireed to get serde to work
-linked_list_allocator = "0.10.5"
+
 
 # logging
 defmt = "0.3"
 defmt-rtt = "0.4.1"
 heapless = "0.8.0"
-bincode = {version="2.0.0-rc.3", features = ["derive", "alloc"], default-features = false}
+bincode = {version="2.0.0-rc.3", features = ["derive"], default-features = false}
 
 # Packets
-bin-packets = { git = "https://github.com/Terminus-Suborbital-Research-Program/bin-packets.git" }
+bin-packets = {git = "https://github.com/Terminus-Suborbital-Research-Program/bin-packets.git"}
 
 # Target features
 [features]
