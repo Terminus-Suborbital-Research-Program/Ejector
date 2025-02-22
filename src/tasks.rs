@@ -1,7 +1,9 @@
 use core::cmp::max;
 
 use bin_packets::{packets::ApplicationPacket, phases::EjectorPhase};
+use canonical_toolchain::{print, println};
 use embedded_hal::digital::StatefulOutputPin;
+use embedded_io::{Read, ReadReady, Write};
 use fugit::ExtU64;
 use rtic::Mutex;
 use rtic_monotonics::Monotonic;
@@ -9,7 +11,7 @@ use rtic_monotonics::Monotonic;
 use crate::{
     app::*,
     communications::{
-        hc12::BaudRate,
+        hc12::{self, BaudRate},
         link_layer::{LinkLayerPayload, LinkPacket},
     },
     Mono,
@@ -140,6 +142,92 @@ pub async fn state_machine_update(mut ctx: state_machine_update::Context<'_>) {
         // We should never wait less than 1ms, tbh
         Mono::delay(max(wait_time, 1).millis()).await;
     }
+}
+
+pub async fn hc12_programmer(mut ctx: hc12_programmer::Context<'_>) {
+    // Clear out the buffer, the HC12 often sends a bit of junk when
+    // it goes into config mode
+    ctx.shared.radio_link.lock(|link| {
+        link.device.set_mode(hc12::HC12Mode::Configuration).ok();
+    });
+
+    Mono::delay(500_u64.millis()).await;
+
+    println!(ctx, "Clearing Buffer");
+    ctx.shared.radio_link.lock(|link| {
+        link.device.clear();
+        link.device.write("AT\n".as_bytes()).ok();
+    });
+
+    Mono::delay(500_u64.millis()).await;
+
+    println!(ctx, "AT Check sent");
+
+    Mono::delay(500_u64.millis()).await;
+
+    println!(ctx, "Buffer");
+    Mono::delay(100_u64.millis()).await;
+    ctx.shared.radio_link.lock(|link| {
+        link.device.update().ok();
+        while link.device.read_ready().unwrap_or(false) {
+            let mut buffer = [0u8; 1];
+            link.device.read(&mut buffer).ok();
+            print!(ctx, "{}", buffer[0] as char);
+        }
+    });
+
+    // Set baudrate
+    ctx.shared.radio_link.lock(|link| {
+        link.device.write("AT+B9600\n".as_bytes()).ok();
+    });
+    Mono::delay(500_u64.millis()).await;
+    ctx.shared.radio_link.lock(|link| {
+        link.device.update().ok();
+        while link.device.read_ready().unwrap_or(false) {
+            let mut buffer = [0u8; 1];
+            link.device.read(&mut buffer).ok();
+            print!(ctx, "{}", buffer[0] as char);
+        }
+    });
+
+    // Set channel (100)
+    ctx.shared.radio_link.lock(|link| {
+        link.device.write("AT+C100\n".as_bytes()).ok();
+    });
+    Mono::delay(500_u64.millis()).await;
+    ctx.shared.radio_link.lock(|link| {
+        link.device.update().ok();
+        while link.device.read_ready().unwrap_or(false) {
+            let mut buffer = [0u8; 1];
+            link.device.read(&mut buffer).ok();
+            print!(ctx, "{}", buffer[0] as char);
+        }
+    });
+
+    // Set power to max (8)
+    ctx.shared.radio_link.lock(|link| {
+        link.device.write("AT+P8\n".as_bytes()).ok();
+    });
+    Mono::delay(500_u64.millis()).await;
+    ctx.shared.radio_link.lock(|link| {
+        link.device.update().ok();
+        while link.device.read_ready().unwrap_or(false) {
+            let mut buffer = [0u8; 1];
+            link.device.read(&mut buffer).ok();
+            print!(ctx, "{}", buffer[0] as char);
+        }
+    });
+    Mono::delay(100_u64.millis()).await;
+    println!(ctx, "Done");
+
+    // Set mode back to normal
+    ctx.shared.radio_link.lock(|link| {
+        link.device.set_mode(hc12::HC12Mode::Normal).ok();
+    });
+
+    // Kickoff packet handling after this is done
+    incoming_packet_handler::spawn().ok(); // Might already be running
+                                           // if this was triggered by the console
 }
 
 pub async fn radio_flush(mut ctx: radio_flush::Context<'_>) {
