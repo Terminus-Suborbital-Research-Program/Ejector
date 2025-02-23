@@ -175,7 +175,7 @@ impl<Uart, ConfigPin> HC12<Uart, ConfigPin> {
         self.incoming_buffer.len()
     }
 
-    // Clears the incoming buffer
+    /// Clears the incoming buffer
     pub fn clear(&mut self) {
         self.incoming_buffer.clear();
     }

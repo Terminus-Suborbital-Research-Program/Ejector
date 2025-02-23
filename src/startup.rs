@@ -1,3 +1,4 @@
+use defmt::info;
 use embedded_hal::digital::OutputPin;
 use fugit::RateExtU32;
 use rp235x_hal::clocks::init_clocks_and_plls;
@@ -5,6 +6,7 @@ use rp235x_hal::gpio::PullNone;
 use rp235x_hal::pwm::Slices;
 use rp235x_hal::uart::{DataBits, StopBits, UartConfig, UartPeripheral};
 use rp235x_hal::{Clock, Sio, Watchdog};
+use rtic_monotonics::Monotonic;
 use rtic_sync::make_channel;
 use usb_device::bus::UsbBusAllocator;
 use usb_device::device::{StringDescriptors, UsbDeviceBuilder, UsbVidPid};
@@ -18,11 +20,18 @@ use crate::hal;
 use crate::phases::EjectorStateMachine;
 use crate::{app::*, Mono};
 
+// Timestamp for logging
+defmt::timestamp!("{=u64:us}", {
+    Mono::now().duration_since_epoch().to_nanos()
+});
+
 pub fn startup(mut ctx: init::Context<'_>) -> (Shared, Local) {
     // Reset the spinlocks - this is skipped by soft-reset
     unsafe {
         hal::sio::spinlock_reset();
     }
+
+    info!("Execution Starting");
 
     // Channel for sending strings to the USB console
     let (usb_console_line_sender, usb_console_line_receiver) =
@@ -131,16 +140,18 @@ pub fn startup(mut ctx: init::Context<'_>) -> (Shared, Local) {
         .device_class(2)
         .build();
 
+    info!("Peripherals initialized, spawning tasks");
+
     // Serial Writer Structure
     let serial_console_writer = serial_handler::SerialWriter::new(usb_console_line_sender);
-
     usb_serial_console_printer::spawn(usb_console_line_receiver).ok();
     usb_console_reader::spawn(usb_console_command_sender).ok();
     #[cfg(debug_assertions)]
     command_handler::spawn(usb_console_command_receiver).ok();
     radio_flush::spawn().ok();
-    //incoming_packet_handler::spawn().ok();
     state_machine_update::spawn().ok();
+    hc12_programmer::spawn().ok();
+    incoming_packet_handler::spawn().ok();
 
     (
         Shared {
@@ -154,6 +165,7 @@ pub fn startup(mut ctx: init::Context<'_>) -> (Shared, Local) {
             clock_freq_hz: clock_freq.to_Hz(),
             state_machine: EjectorStateMachine::new(),
             blink_status_delay_millis: 1000,
+            suspend_packet_handler: false,
         },
         Local { led: led_pin },
     )

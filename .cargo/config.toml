@@ -16,7 +16,7 @@ rustflags = [
     "-C", "no-vectorize-loops",
 ]
 
-runner = "../picotool/build/picotool load -v -x -t elf"
+runner = 'probe-rs run --chip rp235x'
 
 [target.thumbv8m.main-none-eabihf]
 
@@ -27,11 +27,14 @@ rustflags = [
     "-C", "target-cpu=cortex-m33",
 ]
 
-runner = "./picotool/build/picotool load -u -v -x -t elf"
+# "./picotool/build/picotool load -u -v -x -t elf" <- Old picotool loader
+runner = './picotool/build/picotool load -u -v -x -t elf'
 
 [build]
 target = "thumbv8m.main-none-eabihf" # Cortex-M33 (with FPU)
 
 [alias]
-build-rp2040 = "build --no-default-features --features rp2040 --target thumbv6m-none-eabi"
-run-rp2040 =   "run   --no-default-features --features rp2040 --target thumbv6m-none-eabi"
+flash-picotool = "build && ./picotool/build/picotool load -u -v -x -t elf"
+
+[env]
+DEFMT_LOG = "info"

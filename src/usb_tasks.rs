@@ -3,7 +3,7 @@ use crate::{
     hal, utilities,
 };
 use bin_packets::packets::ApplicationPacket;
-use canonical_toolchain::{print, println};
+use ejector::println;
 use embedded_io::Write;
 use fugit::{Duration, ExtU64};
 use rtic::Mutex;
@@ -95,6 +95,9 @@ pub async fn command_handler(
                 let mut recieved = 0;
                 let mut sent = 0;
 
+                // Suspend the packet handler
+                ctx.shared.suspend_packet_handler.lock(|suspend| *suspend = true);
+
                 while recieved < n {
                     // Send a ping command
                     let packet =
@@ -135,23 +138,12 @@ pub async fn command_handler(
                 // Percentage of packets recieved
                 Mono::delay(300_u64.millis()).await;
                 println!(ctx, "{}%", (recieved as f32 / sent as f32) * 100.0);
+
+                // Resume the packet handler
+                ctx.shared.suspend_packet_handler.lock(|suspend| *suspend = false);
             }
 
-            // Peeks at the buffer, printing it to the console
-            "link-peek" => {
-                let buffer = ctx
-                    .shared
-                    .radio_link
-                    .lock(|radio| radio.device.clone_buffer());
-
-                for c in buffer.iter() {
-                    print!(ctx, "{}", *c as char);
-                    Mono::delay(10_u64.millis()).await;
-                }
-                println!(ctx, "");
-            }
-
-            // HC12 Configuration Utility
+            // Configure manually
             "hc-configure" => {
                 hc12_programmer::spawn().ok();
             }
@@ -170,20 +162,6 @@ pub async fn command_handler(
                     "Stack Pointer: 0x{:08X}",
                     utilities::arm::get_stack_pointer()
                 );
-            }
-
-            "check" => {
-                // Check and print any incoming packets
-                while let Some(packet) =
-                    ctx.shared.radio_link.lock(|radio| radio.read_link_packet())
-                {
-                    // Print the packet
-                    println!(ctx, "{:?}", packet);
-
-                    Mono::delay(10_u64.millis()).await;
-                }
-
-                println!(ctx, "Done checking");
             }
 
             _ => {

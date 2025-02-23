@@ -20,6 +20,8 @@ use panic_halt as _;
 // HAL Access
 use rp235x_hal as hal;
 
+use defmt_rtt as _; // global logger
+
 // Monotonics
 use rtic_monotonics::rp235x::prelude::*;
 rp235x_timer_monotonic!(Mono);
@@ -77,6 +79,7 @@ mod app {
         pub clock_freq_hz: u32,
         pub state_machine: EjectorStateMachine,
         pub blink_status_delay_millis: u64,
+        pub suspend_packet_handler: bool,
     }
 
     #[local]
@@ -91,7 +94,7 @@ mod app {
 
     extern "Rust" {
         // Takes care of receiving incoming packets
-        #[task(shared = [radio_link, state_machine], priority = 3)]
+        #[task(shared = [radio_link, state_machine, suspend_packet_handler], priority = 1)]
         async fn incoming_packet_handler(mut ctx: incoming_packet_handler::Context);
 
         // State machine update
@@ -125,7 +128,7 @@ mod app {
         );
 
         // Command Handler for USB Console
-        #[task(shared=[serial_console_writer, radio_link, clock_freq_hz, ejector_servo, state_machine], priority = 3)]
+        #[task(shared=[serial_console_writer, radio_link, clock_freq_hz, ejector_servo, state_machine, suspend_packet_handler], priority = 2)]
         async fn command_handler(
             mut ctx: command_handler::Context,
             mut reciever: Receiver<
@@ -144,7 +147,7 @@ mod app {
         async fn radio_flush(mut ctx: radio_flush::Context);
 
         // An async task to program the HC12 module
-        #[task(shared = [radio_link, serial_console_writer], priority = 1)]
+        #[task(shared = [radio_link, serial_console_writer, suspend_packet_handler], priority = 3)]
         async fn hc12_programmer(mut ctx: hc12_programmer::Context);
     }
 }
