@@ -1,6 +1,11 @@
 use defmt::info;
 use embedded_hal::digital::OutputPin;
+use embedded_io::Write;
 use fugit::RateExtU32;
+use hc12_rs::configuration::baudrates::B9600;
+use hc12_rs::configuration::{Channel, HC12Configuration, Power};
+use hc12_rs::device::IntoATMode;
+use hc12_rs::IntoFU3Mode;
 use rp235x_hal::clocks::init_clocks_and_plls;
 use rp235x_hal::gpio::PullNone;
 use rp235x_hal::pwm::Slices;
@@ -13,8 +18,6 @@ use usb_device::device::{StringDescriptors, UsbDeviceBuilder, UsbVidPid};
 use usbd_serial::SerialPort;
 
 use crate::actuators::servo::{EjectionServoMosfet, EjectorServo, Servo};
-use crate::communications::hc12::HC12;
-use crate::communications::link_layer::{Device, LinkLayerDevice};
 use crate::communications::serial_handler::{self, HeaplessString, MAX_USB_LINES};
 use crate::hal;
 use crate::phases::EjectorStateMachine;
@@ -93,11 +96,38 @@ pub fn startup(mut ctx: init::Context<'_>) -> (Shared, Local) {
             )
             .unwrap();
     uart1_peripheral.enable_rx_interrupt(); // Make sure we can drive our interrupts
+                                            // GPIO10 is the programming pin for HC-12
+    let programming = bank0_pins.gpio10.into_push_pull_output();
+    // Copy the timer
+    let timer = hal::Timer::new_timer1(ctx.device.TIMER1, &mut ctx.device.RESETS, &clocks).clone();
 
-    // Use pin 14 (GPIO10) as the HC12 configuration pin
-    let hc12_configure_pin = bank0_pins.gpio10.into_push_pull_output();
-    let hc12 = HC12::new(uart1_peripheral, hc12_configure_pin).unwrap();
-    let radio_link = LinkLayerDevice::new(hc12, Device::Ejector);
+    info!("UART1 configured, assembling HC-12");
+    let builder = hc12_rs::device::HC12Builder::<(), (), (), ()>::empty()
+        .uart(uart1_peripheral, B9600)
+        .programming_resources(programming, timer)
+        .fu3(HC12Configuration::default());
+
+    let radio = match builder.attempt_build() {
+        Ok(link) => {
+            info!("HC-12 init, link ready");
+            link
+        }
+        Err(e) => {
+            panic!("Failed to init HC-12: {}", e.0);
+        }
+    };
+    // Transition to AT mode
+    info!("Programming HC12...");
+    let radio = radio.into_at_mode().unwrap();
+    info!("HC12 in AT Mode");
+    let radio = radio.set_baudrate(B9600).unwrap();
+    info!("HC12 baudrate set to 9600");
+    let radio = radio.set_channel(Channel::Channel1).unwrap();
+    info!("HC12 channel set to 1");
+    let hc = radio.set_power(Power::P8).unwrap();
+    info!("HC12 power set to P8");
+    let hc = hc.into_fu3_mode().unwrap();
+    info!("HC12 in FU3 Mode");
 
     // Servo
     let pwm_slices = Slices::new(ctx.device.PWM, &mut ctx.device.RESETS);
@@ -148,7 +178,7 @@ pub fn startup(mut ctx: init::Context<'_>) -> (Shared, Local) {
     usb_console_reader::spawn(usb_console_command_sender).ok();
     #[cfg(debug_assertions)]
     command_handler::spawn(usb_console_command_receiver).ok();
-    radio_flush::spawn().ok();
+    //radio_flush::spawn().ok();
     state_machine_update::spawn().ok();
     hc12_programmer::spawn().ok();
     incoming_packet_handler::spawn().ok();
@@ -157,7 +187,7 @@ pub fn startup(mut ctx: init::Context<'_>) -> (Shared, Local) {
         Shared {
             //uart0: uart0_peripheral,
             //uart0_buffer,
-            radio_link,
+            //radio_link,
             ejector_servo,
             usb_device: usb_dev,
             usb_serial: serial,

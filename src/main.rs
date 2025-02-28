@@ -15,8 +15,6 @@ pub mod usb_tasks;
 use tasks::*;
 use usb_tasks::*;
 
-use panic_halt as _;
-
 // HAL Access
 use rp235x_hal as hal;
 
@@ -25,6 +23,17 @@ use defmt_rtt as _; // global logger
 // Monotonics
 use rtic_monotonics::rp235x::prelude::*;
 rp235x_timer_monotonic!(Mono);
+
+#[panic_handler]
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    defmt::error!("Panic: {}", info);
+    loop {
+        // Halt the CPU
+        unsafe {
+            hal::sio::spinlock_reset();
+        }
+    }
+}
 
 /// Tell the Boot ROM about our application
 #[link_section = ".start_block"]
@@ -36,11 +45,7 @@ pub static IMAGE_DEF: rp235x_hal::block::ImageDef = rp235x_hal::block::ImageDef:
     dispatchers = [PIO2_IRQ_0, PIO2_IRQ_1, DMA_IRQ_0],
 )]
 mod app {
-    use crate::{
-        actuators::servo::EjectorServo,
-        communications::hc12::{UART1Bus, GPIO10},
-        phases::EjectorStateMachine,
-    };
+    use crate::{actuators::servo::EjectorServo, phases::EjectorStateMachine};
 
     use super::*;
 
@@ -52,8 +57,6 @@ mod app {
 
     use usb_device::{class_prelude::*, prelude::*};
     use usbd_serial::SerialPort;
-
-    use hc12::HC12;
 
     use rtic_sync::channel::{Receiver, Sender};
     use serial_handler::{HEAPLESS_STRING_ALLOC_LENGTH, MAX_USB_LINES};
@@ -72,7 +75,6 @@ mod app {
     #[shared]
     pub struct Shared {
         pub ejector_servo: EjectorServo,
-        pub radio_link: LinkLayerDevice<HC12<UART1Bus, GPIO10>>,
         pub usb_serial: SerialPort<'static, hal::usb::UsbBus>,
         pub usb_device: UsbDevice<'static, hal::usb::UsbBus>,
         pub serial_console_writer: serial_handler::SerialWriter,
@@ -94,7 +96,7 @@ mod app {
 
     extern "Rust" {
         // Takes care of receiving incoming packets
-        #[task(shared = [radio_link, state_machine, suspend_packet_handler], priority = 1)]
+        #[task(shared = [state_machine, suspend_packet_handler], priority = 1)]
         async fn incoming_packet_handler(mut ctx: incoming_packet_handler::Context);
 
         // State machine update
@@ -128,7 +130,7 @@ mod app {
         );
 
         // Command Handler for USB Console
-        #[task(shared=[serial_console_writer, radio_link, clock_freq_hz, ejector_servo, state_machine, suspend_packet_handler], priority = 2)]
+        #[task(shared=[serial_console_writer, clock_freq_hz, ejector_servo, state_machine, suspend_packet_handler], priority = 2)]
         async fn command_handler(
             mut ctx: command_handler::Context,
             mut reciever: Receiver<
@@ -139,15 +141,15 @@ mod app {
         );
 
         // Updates the radio module on the serial interrupt
-        #[task(binds = UART1_IRQ, shared = [radio_link, serial_console_writer])]
+        #[task(binds = UART1_IRQ, shared = [serial_console_writer])]
         fn uart_interrupt(mut ctx: uart_interrupt::Context);
 
-        // Radio Flush Task
-        #[task(shared = [radio_link], priority = 1)]
-        async fn radio_flush(mut ctx: radio_flush::Context);
+        // // Radio Flush Task
+        // #[task(priority = 1)]
+        // async fn radio_flush(mut ctx: radio_flush::Context);
 
         // An async task to program the HC12 module
-        #[task(shared = [radio_link, serial_console_writer, suspend_packet_handler], priority = 3)]
+        #[task(shared = [serial_console_writer, suspend_packet_handler], priority = 3)]
         async fn hc12_programmer(mut ctx: hc12_programmer::Context);
     }
 }
