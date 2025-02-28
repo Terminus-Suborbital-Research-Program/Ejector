@@ -26,7 +26,8 @@ rp235x_timer_monotonic!(Mono);
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
-    defmt::error!("Panic: {}", info);
+    defmt::error!("Panic: {:?}", info);
+    defmt::flush();
     loop {
         // Halt the CPU
         unsafe {

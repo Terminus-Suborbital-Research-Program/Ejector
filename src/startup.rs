@@ -1,11 +1,11 @@
-use defmt::info;
+use defmt::{debug, info, warn};
 use embedded_hal::digital::OutputPin;
-use embedded_io::Write;
+use embedded_io::{Read, Write};
 use fugit::RateExtU32;
-use hc12_rs::configuration::baudrates::B9600;
+use hc12_rs::baudrates::B9600;
 use hc12_rs::configuration::{Channel, HC12Configuration, Power};
-use hc12_rs::device::IntoATMode;
-use hc12_rs::IntoFU3Mode;
+use hc12_rs::device::builder::HC12Builder;
+use hc12_rs::modes::FU3;
 use rp235x_hal::clocks::init_clocks_and_plls;
 use rp235x_hal::gpio::PullNone;
 use rp235x_hal::pwm::Slices;
@@ -102,32 +102,19 @@ pub fn startup(mut ctx: init::Context<'_>) -> (Shared, Local) {
     let timer = hal::Timer::new_timer1(ctx.device.TIMER1, &mut ctx.device.RESETS, &clocks).clone();
 
     info!("UART1 configured, assembling HC-12");
-    let builder = hc12_rs::device::HC12Builder::<(), (), (), ()>::empty()
-        .uart(uart1_peripheral, B9600)
-        .programming_resources(programming, timer)
-        .fu3(HC12Configuration::default());
-
-    let radio = match builder.attempt_build() {
-        Ok(link) => {
-            info!("HC-12 init, link ready");
-            link
-        }
-        Err(e) => {
-            panic!("Failed to init HC-12: {}", e.0);
-        }
-    };
-    // Transition to AT mode
-    info!("Programming HC12...");
-    let radio = radio.into_at_mode().unwrap();
-    info!("HC12 in AT Mode");
-    let radio = radio.set_baudrate(B9600).unwrap();
-    info!("HC12 baudrate set to 9600");
-    let radio = radio.set_channel(Channel::Channel1).unwrap();
-    info!("HC12 channel set to 1");
-    let hc = radio.set_power(Power::P8).unwrap();
-    info!("HC12 power set to P8");
-    let hc = hc.into_fu3_mode().unwrap();
-    info!("HC12 in FU3 Mode");
+    let mut hc = HC12Builder::new()
+        .serial(uart1_peripheral, B9600)
+        .programming_resources_unpaired(programming, timer)
+        .try_build_at(B9600, HC12Configuration::default())
+        .unwrap();
+    info!("UART1 built into AT mode!");
+    hc.set_configuration(HC12Configuration::default()).unwrap();
+    info!("HC-12 configuration set");
+    let hc = hc.set_mode(FU3::default()).unwrap();
+    info!("HC-12 mode set");
+    let hc = hc.set_baudrate(B9600).unwrap();
+    info!("HC-12 baudrate set");
+    let hc = hc.into_transparent().unwrap();
 
     // Servo
     let pwm_slices = Slices::new(ctx.device.PWM, &mut ctx.device.RESETS);

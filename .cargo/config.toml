@@ -37,4 +37,4 @@ target = "thumbv8m.main-none-eabihf" # Cortex-M33 (with FPU)
 flash-picotool = "build && ./picotool/build/picotool load -u -v -x -t elf"
 
 [env]
-DEFMT_LOG = "info"
+DEFMT_LOG = "debug"
