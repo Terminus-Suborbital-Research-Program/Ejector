@@ -1,4 +1,5 @@
 use bin_packets::phases::EjectorPhase;
+use defmt::info;
 
 /// State machine for the Ejector, holds the current phase
 pub struct EjectorStateMachine {
@@ -43,6 +44,7 @@ impl EjectorStateMachine {
 
     /// Sets the phase to a specific value
     pub fn set_phase(&mut self, phase: EjectorPhase) {
+        info!("State Machine: Overriding phase to {}", phase);
         self.phase = phase;
     }
 }

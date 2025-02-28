@@ -1,5 +1,5 @@
 [package]
-name = "canonical-toolchain"
+name = "ejector"
 version = "0.1.1"
 edition = "2021"
 build="build.rs"
@@ -31,6 +31,8 @@ usbd-serial = "0.2.2"
 embedded-time = "0.12.1"
 fugit = "0.3.7"
 
+# HC-12
+hc12-rs = {git = "https://github.com/thelenlucas/hc12-rs.git", tag = "v0.0.1"}
 
 # logging
 defmt = "0.3"
@@ -40,6 +42,21 @@ bincode = {version="2.0.0-rc.3", features = ["derive"], default-features = false
 
 # Packets
 bin-packets = {git = "https://github.com/Terminus-Suborbital-Research-Program/bin-packets.git"}
+panic-probe = "0.3.2"
+rtt-target = { version = "0.6.1", features = ["defmt"] }
+
+[dev-dependencies]
+embedded-test = { version = "0.6.0", features = ["defmt", "panic-handler"] }
+
+[[test]]
+name = "hc12_tests"
+harness = false
+test = false
+
+[[bin]]
+name = "ejector"
+path = "src/main.rs"
+test = false
 
 # Target features
 [features]
@@ -51,7 +68,9 @@ rp2350 = [
 ]
 
 [profile.dev]
-lto = false
+codegen-units = 1
+lto = "thin"
+debug = true
 
 [profile.release]
 lto = true

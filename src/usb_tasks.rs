@@ -1,9 +1,6 @@
-use crate::{
-    communications::link_layer::Device,
-    hal, utilities,
-};
+use crate::{communications::link_layer::Device, hal, utilities};
 use bin_packets::packets::ApplicationPacket;
-use canonical_toolchain::{print, println};
+use ejector::println;
 use embedded_io::Write;
 use fugit::{Duration, ExtU64};
 use rtic::Mutex;
@@ -20,8 +17,6 @@ pub async fn command_handler(
     mut ctx: command_handler::Context<'_>,
     mut reciever: Receiver<'static, heapless::String<HEAPLESS_STRING_ALLOC_LENGTH>, MAX_USB_LINES>,
 ) {
-    
-
     while let Ok(line) = reciever.recv().await {
         // Split into commands and arguments, on whitespace
         let mut parts = line.split_whitespace();
@@ -53,109 +48,104 @@ pub async fn command_handler(
                 println!(ctx, "Current Phase: {:?}", phase);
             }
 
-            "command-eject" => {
-                // Send an ejection command to the ejector
-                let packet = ApplicationPacket::Command(
-                    bin_packets::packets::CommandPacket::EjectorPhaseSet(
-                        bin_packets::phases::EjectorPhase::Ejection,
-                    ),
-                );
+            // "command-eject" => {
+            //     // Send an ejection command to the ejector
+            //     let packet = ApplicationPacket::Command(
+            //         bin_packets::packets::CommandPacket::EjectorPhaseSet(
+            //             bin_packets::phases::EjectorPhase::Ejection,
+            //         ),
+            //     );
 
-                let link_packet = ctx
-                    .shared
-                    .radio_link
-                    .lock(|radio| radio.construct_packet(packet, Device::Ejector));
+            //     let link_packet = ctx
+            //         .shared
+            //         .radio_link
+            //         .lock(|radio| radio.construct_packet(packet, Device::Ejector));
 
-                ctx.shared.radio_link.lock(|radio| {
-                    radio.write_link_packet(link_packet).ok();
-                });
-            }
+            //     ctx.shared.radio_link.lock(|radio| {
+            //         radio.write_link_packet(link_packet).ok();
+            //     });
+            // }
 
-            "command-standby" => {
-                // Send a standby command to the ejector
-                let packet = ApplicationPacket::Command(
-                    bin_packets::packets::CommandPacket::EjectorPhaseSet(
-                        bin_packets::phases::EjectorPhase::Standby,
-                    ),
-                );
+            // "command-standby" => {
+            //     // Send a standby command to the ejector
+            //     let packet = ApplicationPacket::Command(
+            //         bin_packets::packets::CommandPacket::EjectorPhaseSet(
+            //             bin_packets::phases::EjectorPhase::Standby,
+            //         ),
+            //     );
 
-                let link_packet = ctx
-                    .shared
-                    .radio_link
-                    .lock(|radio| radio.construct_packet(packet, Device::Ejector));
+            //     let link_packet = ctx
+            //         .shared
+            //         .radio_link
+            //         .lock(|radio| radio.construct_packet(packet, Device::Ejector));
 
-                ctx.shared.radio_link.lock(|radio| {
-                    radio.write_link_packet(link_packet).ok();
-                });
-            }
+            //     ctx.shared.radio_link.lock(|radio| {
+            //         radio.write_link_packet(link_packet).ok();
+            //     });
+            // }
 
             // Runs a ping test, pinging Ejector 'n' times
-            "ping" => {
-                let n = parts.next().unwrap_or("1").parse::<u32>().unwrap_or(1);
-                let mut recieved = 0;
-                let mut sent = 0;
+            // "ping" => {
+            //     let n = parts.next().unwrap_or("1").parse::<u32>().unwrap_or(1);
+            //     let mut recieved = 0;
+            //     let mut sent = 0;
 
-                while recieved < n {
-                    // Send a ping command
-                    let packet =
-                        ApplicationPacket::Command(bin_packets::packets::CommandPacket::Ping);
-                    let link_packet = ctx
-                        .shared
-                        .radio_link
-                        .lock(|radio| radio.construct_packet(packet, Device::Ejector));
+            //     // Suspend the packet handler
+            //     ctx.shared
+            //         .suspend_packet_handler
+            //         .lock(|suspend| *suspend = true);
 
-                    println!(ctx, "Sending Ping: {}", sent);
-                    ctx.shared.radio_link.lock(|radio| {
-                        radio.write_link_packet(link_packet).ok();
-                    });
-                    sent += 1;
-                    println!(ctx, "Sent: {}", sent);
+            //     while recieved < n {
+            //         // Send a ping command
+            //         let packet =
+            //             ApplicationPacket::Command(bin_packets::packets::CommandPacket::Ping);
+            //         let link_packet = ctx
+            //             .shared
+            //             .radio_link
+            //             .lock(|radio| radio.construct_packet(packet, Device::Ejector));
 
-                    // Note the current time
-                    let start_time = Mono::now();
+            //         println!(ctx, "Sending Ping: {}", sent);
+            //         ctx.shared.radio_link.lock(|radio| {
+            //             radio.write_link_packet(link_packet).ok();
+            //         });
+            //         sent += 1;
+            //         println!(ctx, "Sent: {}", sent);
 
-                    // Wait for a reply, if we don't get one in 1s, we'll just send another
-                    let del: Duration<u64, 1, 1000000> = 1u64.secs();
-                    while Mono::now() - start_time < del {
-                        // Check for a reply
-                        if let Some(_packet) =
-                            ctx.shared.radio_link.lock(|radio| radio.read_link_packet())
-                        {
-                            recieved += 1;
-                            println!(ctx, "Recieved: {}", recieved);
-                            break;
-                        }
+            //         // Note the current time
+            //         let start_time = Mono::now();
 
-                        Mono::delay(10_u64.millis()).await;
-                    }
-                    Mono::delay(30_u64.millis()).await;
-                }
+            //         // Wait for a reply, if we don't get one in 1s, we'll just send another
+            //         let del: Duration<u64, 1, 1000000> = 1u64.secs();
+            //         while Mono::now() - start_time < del {
+            //             // Check for a reply
+            //             if let Some(_packet) =
+            //                 ctx.shared.radio_link.lock(|radio| radio.read_link_packet())
+            //             {
+            //                 recieved += 1;
+            //                 println!(ctx, "Recieved: {}", recieved);
+            //                 break;
+            //             }
 
-                println!(ctx, "Sent: {}, Recieved: {}", sent, recieved);
-                // Percentage of packets recieved
-                Mono::delay(300_u64.millis()).await;
-                println!(ctx, "{}%", (recieved as f32 / sent as f32) * 100.0);
-            }
+            //             Mono::delay(10_u64.millis()).await;
+            //         }
+            //         Mono::delay(30_u64.millis()).await;
+            //     }
 
-            // Peeks at the buffer, printing it to the console
-            "link-peek" => {
-                let buffer = ctx
-                    .shared
-                    .radio_link
-                    .lock(|radio| radio.device.clone_buffer());
+            //     println!(ctx, "Sent: {}, Recieved: {}", sent, recieved);
+            //     // Percentage of packets recieved
+            //     Mono::delay(300_u64.millis()).await;
+            //     println!(ctx, "{}%", (recieved as f32 / sent as f32) * 100.0);
 
-                for c in buffer.iter() {
-                    print!(ctx, "{}", *c as char);
-                    Mono::delay(10_u64.millis()).await;
-                }
-                println!(ctx, "");
-            }
+            //     // Resume the packet handler
+            //     ctx.shared
+            //         .suspend_packet_handler
+            //         .lock(|suspend| *suspend = false);
+            // }
 
-            // HC12 Configuration Utility
-            "hc-configure" => {
-                hc12_programmer::spawn().ok();
-            }
-
+            // // Configure manually
+            // "hc-configure" => {
+            //     hc12_programmer::spawn().ok();
+            // }
             "clock-freq" => {
                 // Print the current clock frequency
                 ctx.shared.clock_freq_hz.lock(|freq| {
@@ -170,20 +160,6 @@ pub async fn command_handler(
                     "Stack Pointer: 0x{:08X}",
                     utilities::arm::get_stack_pointer()
                 );
-            }
-
-            "check" => {
-                // Check and print any incoming packets
-                while let Some(packet) =
-                    ctx.shared.radio_link.lock(|radio| radio.read_link_packet())
-                {
-                    // Print the packet
-                    println!(ctx, "{:?}", packet);
-
-                    Mono::delay(10_u64.millis()).await;
-                }
-
-                println!(ctx, "Done checking");
             }
 
             _ => {
