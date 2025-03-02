@@ -18,6 +18,7 @@ use usb_device::device::{StringDescriptors, UsbDeviceBuilder, UsbVidPid};
 use usbd_serial::SerialPort;
 
 use crate::actuators::servo::{EjectionServoMosfet, EjectorServo, Servo};
+use crate::communications::csma::{CADevice, Lcg};
 use crate::communications::serial_handler::{self, HeaplessString, MAX_USB_LINES};
 use crate::hal;
 use crate::phases::EjectorStateMachine;
@@ -116,6 +117,9 @@ pub fn startup(mut ctx: init::Context<'_>) -> (Shared, Local) {
     info!("HC-12 baudrate set");
     let hc = hc.into_transparent().unwrap();
 
+    let device: CADevice<Devices, HC12Device, 32> =
+        CADevice::<Devices, _, 32>::new(hc, Lcg::new(123412));
+
     // Servo
     let pwm_slices = Slices::new(ctx.device.PWM, &mut ctx.device.RESETS);
     let mut ejection_pwm = pwm_slices.pwm0;
@@ -167,8 +171,9 @@ pub fn startup(mut ctx: init::Context<'_>) -> (Shared, Local) {
     command_handler::spawn(usb_console_command_receiver).ok();
     //radio_flush::spawn().ok();
     state_machine_update::spawn().ok();
-    hc12_programmer::spawn().ok();
+    radio_heartbeat::spawn().ok();
     incoming_packet_handler::spawn().ok();
+    radio_outgoing_packet_handler::spawn().ok();
 
     (
         Shared {
@@ -183,6 +188,7 @@ pub fn startup(mut ctx: init::Context<'_>) -> (Shared, Local) {
             state_machine: EjectorStateMachine::new(),
             blink_status_delay_millis: 1000,
             suspend_packet_handler: false,
+            radio_link: device,
         },
         Local { led: led_pin },
     )

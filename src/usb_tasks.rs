@@ -1,4 +1,4 @@
-use crate::{communications::link_layer::Device, hal, utilities};
+use crate::{hal, utilities};
 use bin_packets::packets::ApplicationPacket;
 use ejector::println;
 use embedded_io::Write;

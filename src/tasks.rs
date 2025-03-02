@@ -9,11 +9,7 @@ use fugit::ExtU64;
 use rtic::Mutex;
 use rtic_monotonics::Monotonic;
 
-use crate::{
-    app::*,
-    communications::link_layer::{LinkLayerPayload, LinkPacket},
-    Mono,
-};
+use crate::{app::*, Mono};
 
 pub async fn incoming_packet_handler(mut ctx: incoming_packet_handler::Context<'_>) {
     // loop {
@@ -89,9 +85,9 @@ pub async fn heartbeat(mut ctx: heartbeat::Context<'_>) {
 }
 
 pub fn uart_interrupt(mut ctx: uart_interrupt::Context<'_>) {
-    // ctx.shared.radio_link.lock(|radio| {
-    //     radio.device.update().ok();
-    // });
+    ctx.shared.radio_link.lock(|radio| {
+        radio.update_rx();
+    })
 }
 
 pub async fn state_machine_update(mut ctx: state_machine_update::Context<'_>) {
@@ -146,80 +142,44 @@ pub async fn state_machine_update(mut ctx: state_machine_update::Context<'_>) {
     }
 }
 
-pub async fn hc12_programmer(mut ctx: hc12_programmer::Context<'_>) {
-    info!("Programming HC12. Don't do this!");
+pub async fn radio_heartbeat(mut ctx: radio_heartbeat::Context<'_>) {
+    info!("Radio heartbeat task spawned!");
+    loop {
+        let packet = Devices::Ejector;
+        info!("Sending heartbeat packet to radio");
+        ctx.shared.radio_link.lock(|radio| {
+            radio.enqueue(packet).ok();
+        });
+        info!("Heartbeat packet sent to radio");
+        Mono::delay(1000_u64.millis()).await;
+    }
+}
 
-    // // Suspend the packet handler
-    // ctx.shared
-    //     .suspend_packet_handler
-    //     .lock(|suspend| *suspend = true);
-    // // Set mode to configuration
-    // ctx.shared.radio_link.lock(|link| {
-    //     link.device.set_mode(hc12::HC12Mode::Configuration).ok();
-    // });
+pub async fn radio_outgoing_packet_handler(mut ctx: radio_outgoing_packet_handler::Context<'_>) {
+    loop {
+        if let Some(packet) = ctx.shared.radio_link.lock(|radio| radio.dequeue()) {
+            info!("Received packet from radio");
+            info!("Packet: {:?}", packet);
+        }
 
-    // Mono::delay(100_u64.millis()).await;
+        let del = ctx
+            .shared
+            .radio_link
+            .lock(|radio| {
+                let now = Mono::now().duration_since_epoch().to_millis();
+                let del = radio.update_tx(now);
+                del});
 
-    // // Set baudrate
-    // ctx.shared.radio_link.lock(|link| {
-    //     link.device.write("AT+B9600\n".as_bytes()).ok();
-    //     link.device.flush(16).ok();
-    // });
-    // Mono::delay(100_u64.millis()).await;
+        match del {
+            Some(delay) => {
+                Mono::delay(delay.millis()).await;
+            }
 
-    // // Set channel (100)
-    // ctx.shared.radio_link.lock(|link| {
-    //     link.device.write("AT+C100\n".as_bytes()).ok();
-    //     link.device.flush(16).ok();
-    // });
-    // Mono::delay(100_u64.millis()).await;
-
-    // // Set power to max (8)
-    // ctx.shared.radio_link.lock(|link| {
-    //     link.device.write("AT+P8\n".as_bytes()).ok();
-    //     link.device.flush(16).ok();
-    // });
-    // Mono::delay(100_u64.millis()).await;
-
-    // // Get parameters with AT+RX
-    // ctx.shared.radio_link.lock(|link| {
-    //     link.device.write("AT+RX\n".as_bytes()).ok();
-    //     link.device.flush(16).ok();
-    // });
-    // Mono::delay(100_u64.millis()).await;
-
-    // // Get response
-    // let mut response = [0u8; 128];
-    // let read = ctx.shared.radio_link.lock(|link| {
-    //     link.device.update().ok();
-    //     link.device.read(&mut response)
-    // });
-
-    // match read {
-    //     Ok(read) => {
-    //         let response = core::str::from_utf8(&response[..read]).unwrap();
-    //         info!("Read {=u32} bytes", read as u32);
-    //         info!("HC12 Parameters: {=str}", response);
-    //     }
-
-    //     Err(_) => {
-    //         error!("Error reading HC12 parameters");
-    //     }
-    // }
-
-    // info!("HC12 Programming Complete, restarting packet handler");
-
-    // // Set mode back to normal
-    // ctx.shared.radio_link.lock(|link| {
-    //     link.device.set_mode(hc12::HC12Mode::Normal).ok();
-    // });
-
-    // // Kickoff packet handling after this is done
-    // incoming_packet_handler::spawn().ok(); // Might already be running
-    //                                        // if this was triggered by the console
-    // ctx.shared
-    //     .suspend_packet_handler
-    //     .lock(|suspend| *suspend = false);
+            None => {
+                Mono::delay(50_u64.millis()).await;
+            }
+        }
+    }
 }
 
 // pub async fn radio_flush(mut ctx: radio_flush::Context<'_>) {

@@ -46,14 +46,30 @@ pub static IMAGE_DEF: rp235x_hal::block::ImageDef = rp235x_hal::block::ImageDef:
     dispatchers = [PIO2_IRQ_0, PIO2_IRQ_1, DMA_IRQ_0],
 )]
 mod app {
-    use crate::{actuators::servo::EjectorServo, phases::EjectorStateMachine};
+    use crate::{
+        actuators::servo::EjectorServo, communications::csma::CADevice, phases::EjectorStateMachine,
+    };
 
     use super::*;
 
-    use communications::{link_layer::LinkLayerDevice, *};
+    use bin_packets::ApplicationPacket;
+    use bincode::{Decode, Encode};
+    use communications::*;
 
+    use defmt::Format;
     use hal::gpio::{self, FunctionSio, PullNone, SioOutput};
-    use rp235x_hal::uart::UartPeripheral;
+
+    use hc12_rs::{baudrates::B9600, device::HC12, modes::FU3, programming::ProgrammingResouces};
+    use rp235x_hal::{
+        gpio::{
+            bank0::{Gpio10, Gpio8, Gpio9},
+            FunctionUart, Pin, PullDown,
+        },
+        pac::UART1,
+        timer::CopyableTimer1,
+        uart::{Enabled, UartPeripheral},
+        Timer,
+    };
     pub const XTAL_FREQ_HZ: u32 = 12_000_000u32;
 
     use usb_device::{class_prelude::*, prelude::*};
@@ -71,6 +87,27 @@ mod app {
         ),
     >;
 
+    pub type HC12Device = HC12<
+        UartPeripheral<
+            Enabled,
+            UART1,
+            (
+                Pin<Gpio8, FunctionUart, PullDown>,
+                Pin<Gpio9, FunctionUart, PullDown>,
+            ),
+        >,
+        FU3<B9600>,
+        ProgrammingResouces<Pin<Gpio10, FunctionSio<SioOutput>, PullDown>, Timer<CopyableTimer1>>,
+        B9600,
+    >;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, Format)]
+    pub enum Devices {
+        Jupiter,
+        Icarus,
+        Ejector,
+    }
+
     pub static mut USB_BUS: Option<UsbBusAllocator<hal::usb::UsbBus>> = None;
 
     #[shared]
@@ -83,6 +120,7 @@ mod app {
         pub state_machine: EjectorStateMachine,
         pub blink_status_delay_millis: u64,
         pub suspend_packet_handler: bool,
+        pub radio_link: CADevice<Devices, HC12Device, 32>,
     }
 
     #[local]
@@ -99,6 +137,9 @@ mod app {
         // Takes care of receiving incoming packets
         #[task(shared = [state_machine, suspend_packet_handler], priority = 1)]
         async fn incoming_packet_handler(mut ctx: incoming_packet_handler::Context);
+
+        #[task(shared = [radio_link], priority = 1)]
+        async fn radio_outgoing_packet_handler(mut ctx: radio_outgoing_packet_handler::Context);
 
         // State machine update
         #[task(shared = [state_machine, serial_console_writer, ejector_servo, blink_status_delay_millis], priority = 1)]
@@ -142,15 +183,19 @@ mod app {
         );
 
         // Updates the radio module on the serial interrupt
-        #[task(binds = UART1_IRQ, shared = [serial_console_writer])]
+        #[task(binds = UART1_IRQ, shared = [radio_link])]
         fn uart_interrupt(mut ctx: uart_interrupt::Context);
+
+        // Radio heartbeat task
+        // #[task(priority = 1, shared = [radio_link])]
+        // async fn radio_heartbeat(mut ctx: radio_heartbeat::Conext);
 
         // // Radio Flush Task
         // #[task(priority = 1)]
         // async fn radio_flush(mut ctx: radio_flush::Context);
 
         // An async task to program the HC12 module
-        #[task(shared = [serial_console_writer, suspend_packet_handler], priority = 3)]
-        async fn hc12_programmer(mut ctx: hc12_programmer::Context);
+        #[task(shared = [radio_link], priority = 3)]
+        async fn radio_heartbeat(mut ctx: radio_heartbeat::Context);
     }
 }
